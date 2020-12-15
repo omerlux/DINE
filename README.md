@@ -23,3 +23,5 @@ and feedback capacity are estimated without knowledge of the
 channel transition kernel. The proposed estimation framework
 opens the door to a myriad of capacity approximation results for
 continuous alphabet channels that were inaccessible until now.
+
+In this repo I reproduce the results of the above paper. To see more please take a look at [Dine Implementation Report]()
