@@ -1,7 +1,8 @@
-# DINE
+# DINE - Directed Information Neural Estimation
 
 Based on: [H. H. Permuter, Z. Goldfeld, D. Tsur and Z. Aharoni. Capacity of Continuous Channels with Memory via Directed Information Neural Estimator. arXiv preprint arXiv:2003.04179. May 2020.](https://arxiv.org/pdf/2003.04179v2.pdf)
 
+#### From the paper
 > Abstract—Calculating the capacity (with or without feedback)
 of channels with memory and continuous alphabets is a challenging task. It requires optimizing the directed information (DI) rate
 over all channel input distributions. The objective is a multiletter expression, whose analytic solution is only known for a
@@ -24,4 +25,5 @@ channel transition kernel. The proposed estimation framework
 opens the door to a myriad of capacity approximation results for
 continuous alphabet channels that were inaccessible until now.
 
-In this repo I reproduce the results of the above paper. To know more please take a look at [Dine Implementation Report](https://github.com/omerlux/DINE/blob/master/DINE%20Implementation.pdf).
+#### General
+In this repo I reproduce the results of the above paper. To know more please take a look at [Dine Implementation Report](./DINE%20Implementation.pdf).
