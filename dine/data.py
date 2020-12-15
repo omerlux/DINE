@@ -4,6 +4,20 @@ import numpy as np
 from collections import Counter
 
 
+def new_process(args, num):
+    """ Creating NEW data_obj as demanded """
+    data = args.data
+    P = args.P
+    N = args.N
+    alpha = args.alpha
+    ndim = args.ndim
+    if data == 'AWGN':
+        data_obj = AWGN.create_process(P, N, num, ndim)
+    else:
+        data_obj = ARMA.create_process(P, N, alpha, num, ndim)
+    return data_obj
+
+
 class Dictionary(object):
     def __init__(self):
         self.word2idx = {}
@@ -125,22 +139,48 @@ class BatchSentLoader(object):
 
 
 class AWGN(object):
-    def __init__(self, P, N):
+    def __init__(self, P, N, dim):
         self.P = P
         self.N = N
-        self.train = self.create_process(P, N, 100000)
-        self.valid = self.create_process(P, N, 10000)
-        self.test = self.create_process(P, N, 10000)
+        self.train = self.create_process(P, N, 100000, dim)
+        self.valid = self.create_process(P, N, 10000, dim)
+        self.test = self.create_process(P, N, 10000, dim)
 
-    def create_process(self, P, N, num):
-        xn = np.random.normal(0, P, num)
-        zn = np.random.normal(0, N, num)
+    @staticmethod
+    def create_process(P, N, num, dim):
+        xn = np.random.normal(0, np.sqrt(P), (num, dim))
+        zn = np.random.normal(0, np.sqrt(N), (num, dim))
         yn = np.add(xn, zn)
-        features = torch.FloatTensor(num)
-        lables = torch.FloatTensor(num)
+        features = torch.FloatTensor(num, dim)
+        lables = torch.FloatTensor(num, dim)
         for i in range(num):
-            features[i] = xn[i]
-            lables[i] = yn[i]
+            features[i] = torch.FloatTensor(xn[i])  # list(range(i, i+dim)))
+            lables[i] = torch.FloatTensor(yn[i])  # list(range(i, i+dim)))
+        return {'features': features, 'labels': lables}
+
+
+class ARMA(object):
+    def __init__(self, P, N, alpha, dim):
+        self.P = P
+        self.N = N
+        self.train = self.create_process(P, N, alpha, 100000, dim)
+        self.valid = self.create_process(P, N, alpha, 10000, dim)
+        self.test = self.create_process(P, N, alpha, 10000, dim)
+
+    @staticmethod
+    def create_process(P, N, alpha, num, dim):
+        xn = np.random.normal(0, np.sqrt(P), (num, dim))
+        zn = np.random.normal(0, np.sqrt(N), (num + 1, dim))
+        zn[0] = [0] * dim
+        un = np.array([[0] * dim] * num)
+        for i in range(num):
+            un[i] = zn[i + 1] + alpha * zn[i]
+        yn = np.add(xn, un)
+        features = torch.FloatTensor(num.dim)
+        lables = torch.FloatTensor(num, dim)
+        for i in range(num):
+            features[i] = torch.FloatTensor(xn[i])
+            lables[i] = torch.FloatTensor(yn[i])
         return {'features': features, 'labels': lables}
 
 

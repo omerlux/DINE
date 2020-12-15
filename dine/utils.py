@@ -31,20 +31,21 @@ def batchify(data, bsz, args):
 
 def batchify_f1(data, bsz, args, uniformly=False):
     # Work out how cleanly we can divide the dataset into bsz parts.
+    ndim = data['labels'].size(-1)
     nbatch = data['labels'].size(0) // bsz
     tmp_labels = data['labels']
-    # Shuffeling data labels if needed
+    # draw uniformly data labels if needed
     if uniformly:
         ## This will take uniformly distributed values:
         min = torch.min(tmp_labels)
         max = torch.max(tmp_labels)
         tmp_labels = tmp_labels.data.new(tmp_labels.size()).uniform_(min, max)
-        ## This will take normal distributed values, as the labels made from:
-        # tmp_labels = tmp_labels[torch.randperm(n=tmp_labels.size()[0])]
+
     # Trim off any extra elements that wouldn't cleanly fit (remainders).
     data_ret = tmp_labels.narrow(0, 0, nbatch * bsz)
     # Evenly divide the data across the bsz batches.
-    data_ret = data_ret.view(bsz, -1).t().contiguous().unsqueeze(2)
+    data_ret = data_ret.view(bsz, -1, ndim).transpose(0, 1).contiguous()
+    # data_ret = data_ret.view(bsz, -1).t().contiguous().unsqueeze(2)       # WORKED
     if not uniformly:
         print(data_ret.size())
     if args.cuda:
@@ -54,6 +55,7 @@ def batchify_f1(data, bsz, args, uniformly=False):
 
 def batchify_f2(data, bsz, args, uniformly=False):
     # Work out how cleanly we can divide the dataset into bsz parts.
+    ndim = data['labels'].size(-1)
     nbatch = data['labels'].size(0) // bsz
     tmp_labels = data['labels']
     # Shuffeling data labels if needed
@@ -68,9 +70,12 @@ def batchify_f2(data, bsz, args, uniformly=False):
     x = data['features'].narrow(0, 0, nbatch * bsz)
     y = tmp_labels.narrow(0, 0, nbatch * bsz)
     # Evenly divide the data across the bsz batches.
-    x = x.view(bsz, -1).t().contiguous().unsqueeze(2)
-    y = y.view(bsz, -1).t().contiguous().unsqueeze(2)
-    xy = torch.cat((x, y), 2)
+    x = x.view(bsz, -1, ndim).transpose(0, 1).contiguous()
+    y = y.view(bsz, -1, ndim).transpose(0, 1).contiguous()
+    xy = torch.cat((x,y), 2)
+    # x = x.view(bsz, -1).t().contiguous().unsqueeze(2)         # WORKED
+    # y = y.view(bsz, -1).t().contiguous().unsqueeze(2)
+    # xy = torch.cat((x, y), 2)
     if not uniformly:
         print(xy.size())
     if args.cuda:

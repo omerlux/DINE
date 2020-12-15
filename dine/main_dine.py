@@ -19,17 +19,19 @@ from utils import batchify, batchify_f1, batchify_f2, get_batch, get_batch_dine,
 parser = argparse.ArgumentParser(description='PyTorch PennTreeBank Language Model')
 parser.add_argument('--nhid', type=int, default=256,
                     help='number of hidden units per layer')
+parser.add_argument('--ndim', type=int, default=1,
+                    help='inputs vectors dimension')
 parser.add_argument('--ncell', type=int, default=16,
                     help='number of LSTMs')
-parser.add_argument('--lr1', type=float, default=1e-3,
+parser.add_argument('--lr1', type=float, default=0.0001,
                     help='initial learning rate, 1e-4 for adam, 1e-2 for sgd')
-parser.add_argument('--lr2', type=float, default=1e-4,
+parser.add_argument('--lr2', type=float, default=0.00008,
                     help='initial learning rate, 1e-4 for adam, 1e-2 for sgd')
 parser.add_argument('--optimizer', type=str, default='Adam',
                     help='type of optimizer (Adam, SGD)')
 parser.add_argument('--epochs', type=int, default=100,
                     help='upper epoch limit')
-parser.add_argument('--batch_size', type=int, default=20, metavar='N',
+parser.add_argument('--batch_size', type=int, default=200, metavar='N',
                     help='batch size')
 parser.add_argument('--bptt', type=int, default=70,
                     help='sequence length')
@@ -47,10 +49,10 @@ parser.add_argument('--log-interval', type=int, default=14, metavar='N',
                     help='report interval')
 parser.add_argument('--save', type=str, default='EXP',
                     help='path to save the final model')
-parser.add_argument('--alpha', type=float, default=2,
-                    help='alpha L2 regularization on RNN activation (alpha = 0 means no regularization)')
-parser.add_argument('--beta', type=float, default=1,
-                    help='beta slowness regularization applied on RNN activiation (beta = 0 means no regularization)')
+# parser.add_argument('--alpha', type=float, default=2,
+#                     help='alpha L2 regularization on RNN activation (alpha = 0 means no regularization)')
+# parser.add_argument('--beta', type=float, default=1,
+#                     help='beta slowness regularization applied on RNN activiation (beta = 0 means no regularization)')
 parser.add_argument('--wdecay', type=float, default=0,  # 1.2e-6,
                     help='weight decay applied to all weights')
 parser.add_argument('--clip', type=float, default=0.25,
@@ -71,12 +73,14 @@ parser.add_argument('--data', type=str, default="AWGN",
                     help='specific use of gpu')
 parser.add_argument('--N', type=float, default=1,
                     help='variance of Noise gaussian')
-parser.add_argument('--P', type=float, default=5,
+parser.add_argument('--P', type=float, default=1,
                     help='variance of X gaussian')
-parser.add_argument('--mc_eval', type=int, default=0,  # NOTE: won't work with != 0
-                    help='0 is for no Monte Carlo, otherwise its the number of the evaluations')
-parser.add_argument('--mc_freq', type=int, default=5,
-                    help='after how many epochs will be the mc evaluation')
+parser.add_argument('--alpha', type=float, default=0.8,
+                    help='alpha * Ui-1 + Ui + Xi = Yi')
+# parser.add_argument('--mc_eval', type=int, default=0,
+#                     help='0 is for no Monte Carlo, otherwise its the number of the evaluations')
+# parser.add_argument('--mc_freq', type=int, default=5,
+#                     help='after how many epochs will be the mc evaluation')
 args = parser.parse_args()
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -113,24 +117,11 @@ if torch.cuda.is_available():
 # Load data
 ###############################################################################
 
-# Creating AWGN process for train val and test
-if args.data == 'AWGN':
-    data_obj = data.AWGN(args.P, args.N)
-else:
-    # TODO: Add feedback channel
-    data_obj = data.AWGN(args.P, args.N)
+eval_batch_size = args.batch_size #10
+test_batch_size = args.batch_size #1
 
-eval_batch_size = 10
-test_batch_size = 1
-
-print('Model F1 inputs:')
-train_data_f1 = batchify_f1(data_obj.train, args.batch_size, args)
-val_data_f1 = batchify_f1(data_obj.valid, eval_batch_size, args)
-test_data_f1 = batchify_f1(data_obj.test, test_batch_size, args)
-print('Model F2 inputs:')
-train_data_f2 = batchify_f2(data_obj.train, args.batch_size, args)
-val_data_f2 = batchify_f2(data_obj.valid, eval_batch_size, args)
-test_data_f2 = batchify_f2(data_obj.test, test_batch_size, args)
+train_length = 1000000
+valid_length = 1000000
 
 ###############################################################################
 # Build the model
@@ -140,8 +131,8 @@ if args.continue_train:
     model_f1 = torch.load(os.path.join(args.save, 'model_f1.pt'))
     model_f2 = torch.load(os.path.join(args.save, 'model_f2.pt'))
 else:
-    model_f1 = model.DIModel(1, args.nhid, args.ncell, args.wdrop)
-    model_f2 = model.DIModel(2, args.nhid, args.ncell, args.wdrop)
+    model_f1 = model.DIModel(1 * args.ndim, args.nhid, args.ncell, args.wdrop)
+    model_f2 = model.DIModel(2 * args.ndim, args.nhid, args.ncell, args.wdrop)
 
 if args.cuda:
     if args.single_gpu:
@@ -169,16 +160,19 @@ logging.info('Model F2 total parameters: {}'.format(total_params_f2))
 # Training code
 ###############################################################################
 
-def evaluate(data_source_f1, data_source_f2, batch_size=10, data='valid'):
+def evaluate(data_source_f1, data_source_f2, batch_size=10):
     # Turn on evaluation mode which disables dropout.
     model_f1.eval()
     model_f2.eval()
     total_loss_fi = [0, 0]
     hidden_f1 = model_f1.init_hidden(batch_size, args.ncell)
     hidden_f2 = model_f2.init_hidden(batch_size, args.ncell)
-    # Shuffeling data for y~ (ONLY y!)
-    valid_randata_f1 = batchify_f1(getattr(data_obj, data), batch_size, args, uniformly=True)
-    valid_randata_f2 = batchify_f2(getattr(data_obj, data), batch_size, args, uniformly=True)
+
+    # Creating validation randata
+    _val_tmp_randata = data.new_process(args, valid_length)
+    # and setting uniform distribution for y~
+    valid_randata_f1 = batchify_f1(_val_tmp_randata, batch_size, args, uniformly=True)
+    valid_randata_f2 = batchify_f2(_val_tmp_randata, batch_size, args, uniformly=True)
 
     for i in range(0, data_source_f1.size(0) - 1, args.bptt):
         data_f1 = get_batch_dine(data_source_f1, i, args, evaluation=True)
@@ -191,47 +185,24 @@ def evaluate(data_source_f1, data_source_f2, batch_size=10, data='valid'):
         # loss calculation
         raw_loss_f1 = torch.mean(out_f1) - torch.log(torch.mean(torch.exp(out_reused_f1)))
         raw_loss_f2 = torch.mean(out_f2) - torch.log(torch.mean(torch.exp(out_reused_f2)))
-        total_loss_fi[0] += raw_loss_f1.data * len(data_f1)
-        total_loss_fi[1] += raw_loss_f2.data * len(data_f2)
+        total_loss_fi[0] += raw_loss_f1.data  # * len(data_f1)
+        total_loss_fi[1] += raw_loss_f2.data  # * len(data_f2)
         # hidden repackage
         hidden_f1 = repackage_hidden(hidden_f1)
         hidden_f2 = repackage_hidden(hidden_f2)
 
-    total_loss_fi[0] = total_loss_fi[0].item() / len(data_source_f1)
-    total_loss_fi[1] = total_loss_fi[1].item() / len(data_source_f2)
+    total_loss_fi[0] = total_loss_fi[0].item() / (len(data_source_f1) / args.bptt)
+    total_loss_fi[1] = total_loss_fi[1].item() / (len(data_source_f1) / args.bptt)
     return total_loss_fi
-
-
-# def evaluate_mc(data_source, batch_size=10, mc=1):
-#     # Turn on evaluation mode disables dropout - we WONT do it...
-#     # model.eval()
-#
-#     model.train()  # activate dropouts
-#     total_loss = 0
-#     with torch.no_grad():
-#         hidden = [model.init_hidden(batch_size) for _ in range(mc)]
-#         for i in range(0, data_source.size(0) - 1, args.bptt):
-#             data, targets = get_batch_process(data_source, i, args, evaluation=True)
-#
-#             for mc_eval in range(mc):
-#                 prob, hidden_tmp = parallel_model(data, hidden[mc_eval], return_prob=True)
-#                 hidden[mc_eval] = repackage_hidden(hidden_tmp)
-#                 if not mc_eval:  # only in the first time
-#                     prob_acc = prob.detach()
-#                     # prob_acc_sqr = prob ** 2
-#                 else:
-#                     prob_acc = prob_acc + prob.detach()
-#                     # prob_acc_sqr = prob_acc_sqr + prob.detach() ** 2
-#             log_prob_avg = torch.log((prob_acc / mc).add_(1e-8))
-#             # log_prob_std = torch.log( torch.sqrt((prob_acc_sqr / mc) - (prob_acc / mc) ** 2) )
-#             # TODO: From here fix it...
-#             loss = nn.functional.nll_loss(log_prob_avg.view(-1, log_prob_avg.size(2)), targets.view(-1)).data.detach()
-#             total_loss += loss * len(data)
-#     return total_loss.item() / len(data_source)
 
 
 def train():
     assert args.batch_size % args.small_batch_size == 0, 'batch_size must be divisible by small_batch_size'
+
+    # Creating train data
+    _train_tmp_data = data.new_process(args, train_length)
+    train_data_f1 = batchify_f1(_train_tmp_data, args.batch_size, args)
+    train_data_f2 = batchify_f2(_train_tmp_data, args.batch_size, args)
 
     # Turn on training mode which enables dropout.
     total_loss_fi = [0, 0]
@@ -241,8 +212,8 @@ def train():
     hidden_f2 = [model_f2.init_hidden(args.small_batch_size, args.ncell) for _ in
                  range(args.batch_size // args.small_batch_size)]
     # Shuffeling data for y~ (ONLY y!)
-    train_randata_f1 = batchify_f1(data_obj.train, args.batch_size, args, uniformly=True)
-    train_randata_f2 = batchify_f2(data_obj.train, args.batch_size, args, uniformly=True)
+    train_randata_f1 = batchify_f1(_train_tmp_data, args.batch_size, args, uniformly=True)
+    train_randata_f2 = batchify_f2(_train_tmp_data, args.batch_size, args, uniformly=True)
 
     batch, i = 0, 0
     while i < train_data_f1.size(0) - 1 - 1:
@@ -369,44 +340,43 @@ try:
         optimizer_state_f2 = torch.load(os.path.join(args.save, 'optimizer_f2.pt'))
         if args.optimizer == 'SGD':
             optimizer_f1 = torch.optim.SGD(model_f1.parameters(), lr=args.lr1,
-                                        weight_decay=args.wdecay)
+                                           weight_decay=args.wdecay)
             optimizer_f2 = torch.optim.SGD(model_f2.parameters(), lr=args.lr2,
                                            weight_decay=args.wdecay)
         else:  # assuming it's Adam
             optimizer_f1 = torch.optim.Adam(model_f1.parameters(), lr=args.lr1,
-                                           weight_decay=args.wdecay)
+                                            weight_decay=args.wdecay)
             optimizer_f2 = torch.optim.Adam(model_f2.parameters(), lr=args.lr2,
-                                           weight_decay=args.wdecay)
+                                            weight_decay=args.wdecay)
         optimizer_f1.load_state_dict(optimizer_state_f1)
         optimizer_f2.load_state_dict(optimizer_state_f2)
     else:
         if args.optimizer == 'SGD':
             optimizer_f1 = torch.optim.SGD(model_f1.parameters(), lr=args.lr1,
-                                        weight_decay=args.wdecay)
+                                           weight_decay=args.wdecay)
             optimizer_f2 = torch.optim.SGD(model_f2.parameters(), lr=args.lr2,
                                            weight_decay=args.wdecay)
         else:  # assuming it's Adam
             optimizer_f1 = torch.optim.Adam(model_f1.parameters(), lr=args.lr1,
-                                           weight_decay=args.wdecay)
+                                            weight_decay=args.wdecay)
             optimizer_f2 = torch.optim.Adam(model_f2.parameters(), lr=args.lr2,
-                                           weight_decay=args.wdecay)
+                                            weight_decay=args.wdecay)
 
     for epoch in range(1, args.epochs + 1):
         epoch_start_time = time.time()
         train()
 
+        # Creating validation data
+        _val_tmp_data = data.new_process(args, valid_length)
+        val_data_f1 = batchify_f1(_val_tmp_data, eval_batch_size, args)
+        val_data_f2 = batchify_f2(_val_tmp_data, eval_batch_size, args)
+        # Evaluation
         val_loss = evaluate(val_data_f1, val_data_f2, batch_size=eval_batch_size)
         logging.info('-' * 100)
         logging.info('| end of epoch {:3d} | time: {:5.2f}s | '
                      'valid loss F1 {:5.2f} | valid loss F2 {:5.2f} | valid loss {:5.2f}'
                      .format(epoch, (time.time() - epoch_start_time),
                              val_loss[0], val_loss[1], val_loss[1] - val_loss[0]))
-
-        # # MC evaluation: note: after all works, fix it
-        # if args.mc_eval != 0 and epoch % args.mc_freq == 0:
-        #     avg = evaluate_mc(val_data_f1, eval_batch_size, mc=args.mc_eval)
-        #     logging.info('| end of epoch {:3d} | time: {:5.2f}s | Monte Carlo - valid avg loss {:5.2f} | '
-        #                  .format(epoch, (time.time() - epoch_start_time)))
 
         logging.info('-' * 100)
 
@@ -432,12 +402,14 @@ model_f2 = torch.load(os.path.join(args.save, 'model_f2.pt'))
 parallel_model_f1 = nn.DataParallel(model_f1, dim=1).cuda()
 parallel_model_f2 = nn.DataParallel(model_f2, dim=1).cuda()
 
+# Creating test data
+_test_tmp_data = data.new_process(args, valid_length)
+test_data_f1 = batchify_f1(_test_tmp_data, test_batch_size, args)
+test_data_f2 = batchify_f2(_test_tmp_data, test_batch_size, args)
 # Run on test data.
-test_loss = evaluate(test_data_f1, test_data_f2, batch_size=test_batch_size, data='test')
+test_loss = evaluate(test_data_f1, test_data_f2, batch_size=test_batch_size)
 logging.info('=' * 100)
 logging.info('| End of training | '
              ' test loss F1 {:5.2f} | test loss F2 {:5.2f} | test loss {:5.2f}'
              .format(test_loss[0], test_loss[1], test_loss[1] - test_loss[0]))
 logging.info('=' * 100)
-
-# TODO: fix graph show by using numpy saved arrays
