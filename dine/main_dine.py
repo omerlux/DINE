@@ -1,5 +1,6 @@
 import argparse
 import os, sys
+import re
 import time
 import math
 import logging
@@ -77,10 +78,6 @@ parser.add_argument('--P', type=float, default=1,
                     help='variance of X gaussian')
 parser.add_argument('--alpha', type=float, default=0.8,
                     help='alpha * Ui-1 + Ui + Xi = Yi')
-# parser.add_argument('--mc_eval', type=int, default=0,
-#                     help='0 is for no Monte Carlo, otherwise its the number of the evaluations')
-# parser.add_argument('--mc_freq', type=int, default=5,
-#                     help='after how many epochs will be the mc evaluation')
 args = parser.parse_args()
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -95,7 +92,7 @@ if args.small_batch_size < 0:
 
 if not args.continue_train:
     args.save = '{}-{}'.format(args.save, time.strftime("%Y%m%d-%H%M%S"))
-    create_exp_dir(args.save, scripts_to_save=['main.py', 'model.py'])
+    create_exp_dir(args.save, scripts_to_save=['main_ptb.py', 'model.py'])
 
 log_format = '%(asctime)s %(message)s'
 logging.basicConfig(stream=sys.stdout, level=logging.INFO,
@@ -130,6 +127,14 @@ valid_length = 1000000
 if args.continue_train:
     model_f1 = torch.load(os.path.join(args.save, 'model_f1.pt'))
     model_f2 = torch.load(os.path.join(args.save, 'model_f2.pt'))
+    file = open(os.path.join(args.save, 'log.txt'))
+    old_args = file.readline()
+    nums = re.findall("[^a-zA-Z:](\-?\d+[\.]?\d*)", old_args)
+    args.N = nums[7]
+    args.P = nums[8]
+    args.batch_size = nums[10]
+    args.bptt = nums[11]
+    args.ncell = nums[18]
 else:
     model_f1 = model.DIModel(1 * args.ndim, args.nhid, args.ncell, args.wdrop)
     model_f2 = model.DIModel(2 * args.ndim, args.nhid, args.ncell, args.wdrop)
@@ -152,10 +157,6 @@ logging.info('Model F1 total parameters: {}'.format(total_params_f1))
 logging.info('Model F2 total parameters: {}'.format(total_params_f2))
 
 
-# # TODO: What do i need here?
-# criterion = nn.CrossEntropyLoss()
-
-
 ###############################################################################
 # Training code
 ###############################################################################
@@ -165,8 +166,8 @@ def evaluate(data_source_f1, data_source_f2, batch_size=10):
     model_f1.eval()
     model_f2.eval()
     total_loss_fi = [0, 0]
-    hidden_f1 = model_f1.init_hidden(batch_size, args.ncell)
-    hidden_f2 = model_f2.init_hidden(batch_size, args.ncell)
+    hidden_f1 = model_f1.init_hidden(batch_size, model_f1.ncell)
+    hidden_f2 = model_f2.init_hidden(batch_size, model_f2.ncell)
 
     # Creating validation randata
     _val_tmp_randata = data.new_process(args, valid_length)

@@ -104,7 +104,7 @@ if args.small_batch_size < 0:
 
 if not args.continue_train:
     args.save = '{}-{}'.format(args.save, time.strftime("%Y%m%d-%H%M%S"))
-    create_exp_dir(args.save, scripts_to_save=['main.py', 'model.py'])
+    create_exp_dir(args.save, scripts_to_save=['main_ptb.py', 'model.py'])
 
 log_format = '%(asctime)s %(message)s'
 logging.basicConfig(stream=sys.stdout, level=logging.INFO,
