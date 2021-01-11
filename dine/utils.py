@@ -39,6 +39,9 @@ def batchify_f1(data, bsz, args, uniformly=False):
         ## This will take uniformly distributed values:
         min = torch.min(tmp_labels)
         max = torch.max(tmp_labels)
+        # if args.ndim == 10:        # NOTE: testing with dim=10 3/1/21 - ziv: works on AWGN, but on others may not...
+        #     tmp_labels = tmp_labels.data.new(tmp_labels.size()).uniform_(min/2, max/2)
+        # else:
         tmp_labels = tmp_labels.data.new(tmp_labels.size()).uniform_(min, max)
 
     # Trim off any extra elements that wouldn't cleanly fit (remainders).
@@ -48,8 +51,8 @@ def batchify_f1(data, bsz, args, uniformly=False):
     # data_ret = data_ret.view(bsz, -1).t().contiguous().unsqueeze(2)       # WORKED
     if not uniformly:
         print(data_ret.size())
-    if args.cuda:
-        data_ret = data_ret.cuda()
+    # if args.cuda:
+    #     data_ret = data_ret.cuda()
     return data_ret
 
 
@@ -63,6 +66,9 @@ def batchify_f2(data, bsz, args, uniformly=False):
         ## This will take uniformly distributed values:
         min = torch.min(tmp_labels)
         max = torch.max(tmp_labels)
+        # if args.ndim == 10:        # NOTE: testing with dim=10 3/1/21 - ziv: works on AWGN, but on others may not...
+        #     tmp_labels = tmp_labels.data.new(tmp_labels.size()).uniform_(min/2, max/2)
+        # else:
         tmp_labels = tmp_labels.data.new(tmp_labels.size()).uniform_(min, max)
         ## This will take normal distributed values, as the labels made from:
         # tmp_labels = tmp_labels[torch.randperm(n=tmp_labels.size()[0])]
@@ -78,8 +84,8 @@ def batchify_f2(data, bsz, args, uniformly=False):
     # xy = torch.cat((x, y), 2)
     if not uniformly:
         print(xy.size())
-    if args.cuda:
-        xy = xy.cuda()
+    # if args.cuda:
+    #     xy = xy.cuda()
     return xy
 
 
@@ -93,7 +99,7 @@ def get_batch(source, i, args, seq_len=None, evaluation=False):
 def get_batch_dine(source, i, args, seq_len=None, evaluation=False):
     seq_len = min(seq_len if seq_len else args.bptt, len(source) - 1 - i)
     data = source[i:i + seq_len].detach() if evaluation else source[i:i + seq_len]
-    return data
+    return data.cuda() if args.cuda else data
 
 
 def create_exp_dir(path, scripts_to_save=None):

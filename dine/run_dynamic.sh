@@ -1,1 +1,0 @@
-python dynamiceval.py --data data/penn --gpu_device 4 --path PTB-20201018-170341 --lamb 0.075

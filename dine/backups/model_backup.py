@@ -79,7 +79,7 @@ class ModifiedLSTMcell(nn.Module):
 class DIModel(nn.Module):
     """Container of DINE F1/2 function"""
 
-    def __init__(self, ninp, nhid, ncell=20, wdrop=0, f2=False):
+    def __init__(self, ninp, nhid, ncell=20, wdrop=0):
         super(DIModel, self).__init__()
 
         self.LSTMunits = [ModifiedLSTMcell(ninp, nhid, dropout=wdrop, recycle_hid=True)
@@ -92,29 +92,18 @@ class DIModel(nn.Module):
         self.ncell = ncell
         self.wdrop = wdrop
 
-        self.f2 = f2
-        self.rand_num = 0
-        self.sup_min = -1
-        self.sup_max = 1
-
     def init_weights(self):
         pass  # for now...
 
-    def forward(self, input, hidden):
+    def forward(self, input, randinput, hidden): # TODO: add random input
         """input is the normal (seq x batch x neurons) input.
         hidden is for normal LSTM, used LSTM will get recycled all_hidden parameter"""
         batch_size = input.size(1)
 
         raw_outputs = [None]*self.ncell
+        raw_outputs_reused = [None]*self.ncell
         recycled_hids = [None]*self.ncell
         new_h = [None]*self.ncell
-
-        out_reused = []
-        randinput = input.data.new(input.size()).uniform_(self.sup_min, self.sup_max)
-        if self.f2:
-            randinput[:, :, :(int)(self.ninp / 2)] = input[:, :, :(int)(self.ninp / 2)]  # copying back the {Xn} values
-        raw_outputs_reused = [None] * self.ncell
-
         for cell, lstm in enumerate(self.LSTMunits):
             # Normal LSTM - enabling recycling
             lstm.recycle_hid = True
@@ -122,25 +111,12 @@ class DIModel(nn.Module):
             # Modified LSTM - disabling recycling
             lstm.recycle_hid = False
             raw_outputs_reused[cell] = lstm(randinput, None, all_hidden=recycled_hids[cell])
+            # TODO: for 10 dimensions try to use randinput of larger values (500 times bigger than the normal)
         # Normal LSTM to fully connected layer
         out = self.fcn(input=torch.cat(raw_outputs, axis=2))
         # Modified LSTM to fully connected layer
-        out_reused.append(self.fcn(input=torch.cat(raw_outputs_reused, axis=2)))  # ncell x seq x batch x nhid
+        out_reused = self.fcn(input=torch.cat(raw_outputs_reused, axis=2))   # ncell x seq x batch x nhid
 
-        # TODO: for 10 dimensions try to use randinput of larger values (500 times bigger than the normal)
-        for _ in range(self.rand_num):
-            randinput = input.data.new(input.size()).uniform_(self.sup_min, self.sup_max)
-            if input.size(2) == 2:
-                randinput[:, :, 0] = input[:, :, 0]  # copying back the {Xn} values
-            raw_outputs_reused = [None] * self.ncell
-            for cell, lstm in enumerate(self.LSTMunits):
-                # Modified LSTM - disabling recycling
-                lstm.recycle_hid = False
-                raw_outputs_reused[cell] = lstm(randinput, None, all_hidden=recycled_hids[cell])
-            # Modified LSTM to fully connected layer
-            out_reused.append(self.fcn(input=torch.cat(raw_outputs_reused, axis=2)))   # ncell x seq x batch x nhid
-
-        out_reused = torch.cat(out_reused, axis=1)
         return out, out_reused, new_h
 
     def init_hidden(self, bsz, ncell):

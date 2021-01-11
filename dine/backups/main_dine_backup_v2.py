@@ -53,8 +53,6 @@ parser.add_argument('--save', type=str, default='EXP',
                     help='path to save the final model')
 parser.add_argument('--start_save', type=int, default=200,
                     help='start save validation data from this epoch')
-parser.add_argument('--rand_ret', type=int, default=0,
-                    help='feedforward random data x times')
 parser.add_argument('--wdecay', type=float, default=0,  # 1.2e-6,
                     help='weight decay applied to all weights')
 parser.add_argument('--clip', type=float, default=0.25,
@@ -138,7 +136,7 @@ if args.continue_train:
     args.ndim = int(re.findall("ndim=([-+]?\d*\.*\d+)", old_args)[0])
 else:
     model_f1 = model.DIModel(1 * args.ndim, args.nhid, args.ncell, args.wdrop)
-    model_f2 = model.DIModel(2 * args.ndim, args.nhid, args.ncell, args.wdrop, f2=True)
+    model_f2 = model.DIModel(2 * args.ndim, args.nhid, args.ncell, args.wdrop)
     with open(os.path.join(args.save, 'validvars'), 'wb') as f:
         # Aggregate exponents and outputs to calculate the validation set from the beginning of evaluation time
         pickle.dump([0, 0, 0, 0, 0], f)
@@ -176,18 +174,21 @@ def evaluate(data_source_f1, data_source_f2, batch_size=10):
     hidden_f1 = model_f1.init_hidden(batch_size, model_f1.ncell)
     hidden_f2 = model_f2.init_hidden(batch_size, model_f2.ncell)
 
-    # Adjusting parameters for uniformly taken samples
-    model_f1.rand_num = model_f2.rand_num = 0       # args.ndim * 1
-    model_f1.sup_min = model_f2.sup_min = torch.min(data_source_f1)
-    model_f1.sup_max = model_f2.sup_max = torch.max(data_source_f1)
+    # Creating validation randata
+    _val_tmp_randata = data.new_process(args, valid_length)
+    # and setting uniform distribution for y~
+    valid_randata_f1 = batchify_f1(_val_tmp_randata, batch_size, args, uniformly=True)
+    valid_randata_f2 = batchify_f2(_val_tmp_randata, batch_size, args, uniformly=True)
 
     for i in range(0, data_source_f1.size(0) - 1, args.bptt):
         data_f1 = get_batch_dine(data_source_f1, i, args, evaluation=True)
         data_f2 = get_batch_dine(data_source_f2, i, args, evaluation=True)
+        randata_f1 = get_batch_dine(valid_randata_f1, i, args, evaluation=True)
+        randata_f2 = get_batch_dine(valid_randata_f2, i, args, evaluation=True)
         # forward
         with torch.no_grad():  # added this line to overcome OOM error
-            out_f1, out_reused_f1, hidden_f1 = parallel_model_f1(data_f1, hidden_f1)
-            out_f2, out_reused_f2, hidden_f2 = parallel_model_f2(data_f2, hidden_f2)
+            out_f1, out_reused_f1, hidden_f1 = parallel_model_f1(data_f1, randata_f1, hidden_f1)
+            out_f2, out_reused_f2, hidden_f2 = parallel_model_f2(data_f2, randata_f2, hidden_f2)
 
         # loss aggregation
         total_f1 += torch.sum(out_f1)
@@ -212,11 +213,6 @@ def train():
     train_data_f1 = batchify_f1(_train_tmp_data, args.batch_size, args)
     train_data_f2 = batchify_f2(_train_tmp_data, args.batch_size, args)
 
-    # Adjusting parameters for uniformly taken samples
-    model_f1.rand_num = model_f2.rand_num = args.rand_ret
-    model_f1.sup_min = model_f2.sup_min = torch.min(train_data_f1)
-    model_f1.sup_max = model_f2.sup_max = torch.max(train_data_f1)
-
     # Turn on training mode which enables dropout.
     total_loss_fi = [0, 0]
     start_time = time.time()
@@ -224,6 +220,9 @@ def train():
                  range(args.batch_size // args.small_batch_size)]
     hidden_f2 = [model_f2.init_hidden(args.small_batch_size, args.ncell) for _ in
                  range(args.batch_size // args.small_batch_size)]
+    # Shuffeling data for y~ (ONLY y!)
+    train_randata_f1 = batchify_f1(_train_tmp_data, args.batch_size, args, uniformly=True)
+    train_randata_f2 = batchify_f2(_train_tmp_data, args.batch_size, args, uniformly=True)
 
     log_interval = np.ceil((len(train_data_f1) // args.bptt) / 5)
     batch, i = 0, 0
@@ -245,6 +244,8 @@ def train():
 
         data_f1 = get_batch_dine(train_data_f1, i, args, seq_len=seq_len)
         data_f2 = get_batch_dine(train_data_f2, i, args, seq_len=seq_len)
+        randata_f1 = get_batch_dine(train_randata_f1, i, args, seq_len=seq_len)
+        randata_f2 = get_batch_dine(train_randata_f2, i, args, seq_len=seq_len)
 
         optimizer_f1.zero_grad()
         optimizer_f2.zero_grad()
@@ -253,14 +254,16 @@ def train():
         while start < args.batch_size:
             cur_data_f1 = data_f1[:, start: end]
             cur_data_f2 = data_f2[:, start: end]
+            cur_randata_f1 = randata_f1[:, start: end]
+            cur_randata_f2 = randata_f2[:, start: end]
 
             # Starting each batch, we detach the hidden state from how it was previously produced.
             # If we didn't, the model would try backpropagating all the way to start of the dataset.
             hidden_f1[s_id] = repackage_hidden(hidden_f1[s_id])
             hidden_f2[s_id] = repackage_hidden(hidden_f2[s_id])
 
-            out_f1, out_reused_f1, hidden_f1[s_id] = parallel_model_f1(cur_data_f1, hidden_f1[s_id])
-            out_f2, out_reused_f2, hidden_f2[s_id] = parallel_model_f2(cur_data_f2, hidden_f2[s_id])
+            out_f1, out_reused_f1, hidden_f1[s_id] = parallel_model_f1(cur_data_f1, cur_randata_f1, hidden_f1[s_id])
+            out_f2, out_reused_f2, hidden_f2[s_id] = parallel_model_f2(cur_data_f2, cur_randata_f2, hidden_f2[s_id])
 
             raw_loss_f1 = torch.mean(out_f1) - torch.log(torch.mean(torch.exp(out_reused_f1)))
             raw_loss_f2 = torch.mean(out_f2) - torch.log(torch.mean(torch.exp(out_reused_f2)))
